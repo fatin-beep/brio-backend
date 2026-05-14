@@ -8,7 +8,6 @@ from database import save_contact, save_conversation, save_message, save_lead
 from ai_agent import get_ai_reply
 router = APIRouter()
 
-
 # ── HELPER — Send WhatsApp message ──────────────────────────
 def send_whatsapp_message(phone_number: str, message: str):
     token = os.getenv("WHATSAPP_ACCESS_TOKEN")
