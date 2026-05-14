@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
+from typing import Any, Dict
 import os
 import json
 import requests
 from database import save_contact, save_conversation, save_message, save_lead
 from ai_agent import get_ai_reply
-
 router = APIRouter()
 
 
