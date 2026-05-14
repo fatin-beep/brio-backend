@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
-from typing import Any, Dict
 import os
 import json
 import requests
 from database import save_contact, save_conversation, save_message, save_lead
 from ai_agent import get_ai_reply
+from notifications import notify_new_lead, notify_escalation
+from booking import get_booking_message
+
 router = APIRouter()
+
 
 # ── HELPER — Send WhatsApp message ──────────────────────────
 def send_whatsapp_message(phone_number: str, message: str):
@@ -32,7 +35,7 @@ def send_whatsapp_message(phone_number: str, message: str):
     if response.status_code == 200:
         print(f"✅ Reply sent to {phone_number}")
     else:
-        print(f"❌ Failed to send reply: {response.text}")
+        print(f"❌ Failed to send: {response.text}")
 
     return response
 
@@ -78,14 +81,17 @@ async def receive_message(request: Request):
         phone_number = message.get("from")
         message_type = message.get("type")
 
+        # Get owner email for notifications
+        owner_email = os.getenv("BUSINESS_OWNER_EMAIL", "")
+
         if message_type == "text":
             text = message["text"]["body"]
             print(f"📩 Message from {phone_number}: {text}")
 
-            # Step 1 — Save contact to Supabase
+            # Step 1 — Save contact
             contact_id = save_contact(phone_number)
 
-            # Step 2 — Save or get conversation
+            # Step 2 — Save conversation
             conversation_id = save_conversation(contact_id)
 
             # Step 3 — Save incoming message
@@ -95,13 +101,18 @@ async def receive_message(request: Request):
                 direction="in"
             )
 
-            # Step 4 — Get AI reply from Abdullah's agent
+            # Step 4 — Get AI reply
             ai_response = await get_ai_reply(text, phone_number)
             reply = ai_response["reply"]
             intent = ai_response["intent"]
             escalate = ai_response["escalate"]
 
-            # Step 5 — Save outgoing message
+            # Step 5 — If booking request, send Cal.com link
+            if intent == "BOOKING_REQUEST":
+                reply = get_booking_message()
+                print(f"📅 Booking link sent to {phone_number}")
+
+            # Step 6 — Save outgoing message
             save_message(
                 conversation_id=conversation_id,
                 content=reply,
@@ -109,16 +120,22 @@ async def receive_message(request: Request):
                 intent=intent
             )
 
-            # Step 6 — Save as lead
+            # Step 7 — Save lead
             save_lead(contact_id, intent=intent)
 
-            # Step 7 — Send reply on WhatsApp
-            send_whatsapp_message(phone_number, reply)
+            # Step 8 — Send new lead notification email
+            if owner_email:
+                notify_new_lead(owner_email, phone_number, intent)
 
-            # Step 8 — If escalation needed, notify owner
-            if escalate:
-                print(f"🚨 Escalation needed for {phone_number}")
-                # Day 5: we add Brevo email here
+            # Step 9 — Send escalation email if needed
+            if escalate and owner_email:
+                notify_escalation(owner_email, phone_number, text)
+                reply = """I understand this needs special attention. 
+I've notified our team and someone will get back to you shortly. 
+Thank you for your patience! 🙏"""
+
+            # Step 10 — Send reply on WhatsApp
+            send_whatsapp_message(phone_number, reply)
 
         return {"status": "ok"}
 
