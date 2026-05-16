@@ -7,6 +7,10 @@ from database import save_contact, save_conversation, save_message, save_lead
 from ai_agent import get_ai_reply
 from notifications import notify_new_lead, notify_escalation
 from booking import get_booking_message
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
@@ -58,6 +62,7 @@ def verify_webhook(
 
 # ── ENDPOINT 2 — Receive & process message ──────────────────
 @router.post("/whatsapp/webhook")
+@limiter.limit("100/minute")
 async def receive_message(request: Request):
     try:
         body = await request.body()
@@ -107,7 +112,7 @@ async def receive_message(request: Request):
             intent = ai_response["intent"]
             escalate = ai_response["escalate"]
 
-            # Step 5 — If booking request, send Cal.com link
+            # Step 5 — If booking request send Cal.com link
             if intent == "BOOKING_REQUEST":
                 reply = get_booking_message()
                 print(f"📅 Booking link sent to {phone_number}")
@@ -130,8 +135,8 @@ async def receive_message(request: Request):
             # Step 9 — Send escalation email if needed
             if escalate and owner_email:
                 notify_escalation(owner_email, phone_number, text)
-                reply = """I understand this needs special attention. 
-I've notified our team and someone will get back to you shortly. 
+                reply = """I understand this needs special attention.
+I've notified our team and someone will get back to you shortly.
 Thank you for your patience! 🙏"""
 
             # Step 10 — Send reply on WhatsApp
