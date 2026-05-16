@@ -7,10 +7,6 @@ from database import save_contact, save_conversation, save_message, save_lead
 from ai_agent import get_ai_reply
 from notifications import notify_new_lead, notify_escalation
 from booking import get_booking_message
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
@@ -62,7 +58,6 @@ def verify_webhook(
 
 # ── ENDPOINT 2 — Receive & process message ──────────────────
 @router.post("/whatsapp/webhook")
-@limiter.limit("100/minute")
 async def receive_message(request: Request):
     try:
         body = await request.body()
