@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 import os
 import json
 import requests
@@ -9,6 +10,15 @@ from notifications import notify_new_lead, notify_escalation
 from booking import get_booking_message
 
 router = APIRouter()
+
+
+# ── REQUEST MODEL ────────────────────────────────────────────
+# This tells FastAPI what body format to expect
+# Now docs page will show proper input box
+# ────────────────────────────────────────────────────────────
+class SendMessageRequest(BaseModel):
+    phone_number: str
+    message: str
 
 
 # ── HELPER — Send WhatsApp message ──────────────────────────
@@ -145,20 +155,15 @@ Thank you for your patience! 🙏"""
 
 
 # ── ENDPOINT 3 — Manual send ─────────────────────────────────
+# Now has proper request model so docs page shows input box
+# ────────────────────────────────────────────────────────────
 @router.post("/whatsapp/send")
-async def send_message(request: Request):
+async def send_message(request_data: SendMessageRequest):
     try:
-        data = await request.json()
-        phone_number = data.get("phone_number")
-        message = data.get("message")
-
-        if not phone_number or not message:
-            raise HTTPException(
-                status_code=400,
-                detail="phone_number and message are required"
-            )
-
-        response = send_whatsapp_message(phone_number, message)
+        response = send_whatsapp_message(
+            request_data.phone_number,
+            request_data.message
+        )
         return {"status": "ok", "whatsapp_response": response.text}
 
     except Exception as e:
