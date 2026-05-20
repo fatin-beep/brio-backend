@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 import os
@@ -13,9 +13,6 @@ router = APIRouter()
 
 
 # ── REQUEST MODEL ────────────────────────────────────────────
-# This tells FastAPI what body format to expect
-# Now docs page will show proper input box
-# ────────────────────────────────────────────────────────────
 class SendMessageRequest(BaseModel):
     phone_number: str
     message: str
@@ -51,19 +48,23 @@ def send_whatsapp_message(phone_number: str, message: str):
 
 
 # ── ENDPOINT 1 — Webhook verification ───────────────────────
+# Meta sends hub.mode, hub.verify_token, hub.challenge with DOTS
+# Query aliases handle this correctly
+# ────────────────────────────────────────────────────────────
 @router.get("/whatsapp/webhook")
 def verify_webhook(
-    hub_mode: str = None,
-    hub_verify_token: str = None,
-    hub_challenge: str = None
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
 ):
     VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN")
 
     if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
         print("✅ Webhook verified!")
-        return PlainTextResponse(content=hub_challenge)
+        return PlainTextResponse(content=hub_challenge, status_code=200)
     else:
-        raise HTTPException(status_code=403, detail="Verification failed")
+        print(f"❌ Verification failed — token mismatch")
+        raise HTTPException(status_code=403, detail="Verification token mismatch")
 
 
 # ── ENDPOINT 2 — Receive & process message ──────────────────
@@ -155,8 +156,6 @@ Thank you for your patience! 🙏"""
 
 
 # ── ENDPOINT 3 — Manual send ─────────────────────────────────
-# Now has proper request model so docs page shows input box
-# ────────────────────────────────────────────────────────────
 @router.post("/whatsapp/send")
 async def send_message(request_data: SendMessageRequest):
     try:
