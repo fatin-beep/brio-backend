@@ -14,40 +14,40 @@ def get_supabase():
 # id, wa_number, name, first_seen, last_seen, 
 # total_messages, business_id
 # ────────────────────────────────────────────────────────────
-def save_contact(phone_number: str, business_id: str = "demo"):
+def save_contact(phone_number: str, business_id: str = "demo", name: str = None):
     try:
         supabase = get_supabase()
 
-        # Check if contact already exists
-        existing = supabase.table("contacts")\
-            .select("*")\
-            .eq("wa_number", phone_number)\
-            .execute()
+        # Fetch first business to get business_id
+        try:
+            business = supabase.table('businesses').select('id').limit(1).execute()
 
-        if existing.data:
-            # Contact exists — update last_seen and total_messages
-            contact_id = existing.data[0]["id"]
-            current_total = existing.data[0]["total_messages"] or 0
+            if not business.data:
+                print("⚠️ No business found in businesses table, using default")
+                final_business_id = business_id
+            else:
+                final_business_id = business.data[0]['id']
+        except Exception as be:
+            print(f"⚠️ Error fetching business: {be}, using default")
+            final_business_id = business_id
 
-            supabase.table("contacts").update({
-                "last_seen": datetime.utcnow().isoformat(),
-                "total_messages": current_total + 1
-            }).eq("id", contact_id).execute()
+        # Create or update contact using upsert
+        try:
+            contact_result = supabase.table('contacts').upsert({
+                'wa_number': phone_number,
+                'name': name if name else 'Unknown',
+                'business_id': final_business_id,
+                'first_seen': datetime.utcnow().isoformat(),
+                'last_seen': datetime.utcnow().isoformat(),
+                'total_messages': 1
+            }, on_conflict='wa_number').execute()
 
-            print(f"📋 Existing contact updated: {phone_number}")
-            return contact_id
-        else:
-            # New contact — save them
-            result = supabase.table("contacts").insert({
-                "wa_number": phone_number,
-                "business_id": business_id,
-                "first_seen": datetime.utcnow().isoformat(),
-                "last_seen": datetime.utcnow().isoformat(),
-                "total_messages": 1
-            }).execute()
+            print(f"✅ SUCCESS CONTACT: {contact_result.data[0]['id'] if contact_result.data else 'upserted'}")
+            return contact_result.data[0]['id'] if contact_result.data else None
 
-            print(f"✅ New contact saved: {phone_number}")
-            return result.data[0]["id"]
+        except Exception as ce:
+            print(f"❌ CONTACT ERROR: {str(ce)}")
+            return None
 
     except Exception as e:
         print(f"⚠️ Error saving contact: {e}")
@@ -63,15 +63,22 @@ def save_conversation(contact_id: str, business_id: str = "demo"):
         supabase = get_supabase()
 
         # Check if open conversation already exists
-        existing = supabase.table("conversations")\
-            .select("*")\
-            .eq("contact_id", contact_id)\
-            .eq("status", "open")\
-            .execute()
+        try:
+            existing = supabase.table("conversations")\
+                .select("*")\
+                .eq("contact_id", contact_id)\
+                .eq("status", "open")\
+                .execute()
 
-        if existing.data:
-            return existing.data[0]["id"]
-        else:
+            if existing.data:
+                print(f"✅ SUCCESS CONVERSATION: Found existing conversation {existing.data[0]['id']}")
+                return existing.data[0]["id"]
+        except Exception as qe:
+            print(f"❌ CONVERSATION QUERY ERROR: {str(qe)}")
+            return None
+
+        # Create new conversation if none exists
+        try:
             result = supabase.table("conversations").insert({
                 "contact_id": contact_id,
                 "business_id": business_id,
@@ -79,8 +86,12 @@ def save_conversation(contact_id: str, business_id: str = "demo"):
                 "created_at": datetime.utcnow().isoformat()
             }).execute()
 
-            print(f"✅ New conversation started")
-            return result.data[0]["id"]
+            print(f"✅ SUCCESS CONVERSATION: New conversation created {result.data[0]['id'] if result.data else 'unknown'}")
+            return result.data[0]["id"] if result.data else None
+
+        except Exception as ie:
+            print(f"❌ CONVERSATION INSERT ERROR: {str(ie)}")
+            return None
 
     except Exception as e:
         print(f"⚠️ Error saving conversation: {e}")
@@ -101,18 +112,25 @@ def save_message(
     try:
         supabase = get_supabase()
 
-        supabase.table("messages").insert({
-            "conversation_id": conversation_id,
-            "content": content,
-            "direction": direction,
-            "timestamp": datetime.utcnow().isoformat(),
-            "intent_detected": intent
-        }).execute()
+        try:
+            result = supabase.table("messages").insert({
+                "conversation_id": conversation_id,
+                "content": content,
+                "direction": direction,
+                "timestamp": datetime.utcnow().isoformat(),
+                "intent_detected": intent
+            }).execute()
 
-        print(f"✅ Message saved ({direction}): {content[:30]}")
+            print(f"✅ SUCCESS MESSAGE: Saved ({direction}): {content[:30]}")
+            return True
+
+        except Exception as ie:
+            print(f"❌ MESSAGE INSERT ERROR: {str(ie)}")
+            return False
 
     except Exception as e:
         print(f"⚠️ Error saving message: {e}")
+        return False
 
 
 # ── SAVE LEAD ───────────────────────────────────────────────
@@ -129,13 +147,22 @@ def save_lead(
         supabase = get_supabase()
 
         # Check if lead already exists
-        existing = supabase.table("leads")\
-            .select("*")\
-            .eq("contact_id", contact_id)\
-            .execute()
+        try:
+            existing = supabase.table("leads")\
+                .select("*")\
+                .eq("contact_id", contact_id)\
+                .execute()
 
-        if not existing.data:
-            supabase.table("leads").insert({
+            if existing.data:
+                print(f"✅ SUCCESS LEAD: Existing lead found for contact {contact_id}")
+                return existing.data[0]["id"] if existing.data else None
+        except Exception as qe:
+            print(f"❌ LEAD QUERY ERROR: {str(qe)}")
+            return None
+
+        # Create new lead if none exists
+        try:
+            result = supabase.table("leads").insert({
                 "contact_id": contact_id,
                 "business_id": business_id,
                 "created_at": datetime.utcnow().isoformat(),
@@ -143,13 +170,19 @@ def save_lead(
                 "notes": f"Intent: {intent}"
             }).execute()
 
-            print(f"✅ New lead saved")
+            print(f"✅ SUCCESS LEAD: New lead saved for contact {contact_id}")
+            return result.data[0]["id"] if result.data else None
+
+        except Exception as ie:
+            print(f"❌ LEAD INSERT ERROR: {str(ie)}")
+            return None
 
     except Exception as e:
         print(f"⚠️ Error saving lead: {e}")
+        return None
 
 
-# ── GET BUSINESS CONFIG ─────────────────────────────────────
+# ── GET BUSINESS CONFIG ─────────────────────────────────----
 # Matches Hamza's businesses table:
 # id, name, wa_number, wa_token, 
 # knowledge_base, ai_persona, owner_email
@@ -158,14 +191,22 @@ def get_business_config(business_id: str = "demo"):
     try:
         supabase = get_supabase()
 
-        result = supabase.table("businesses")\
-            .select("*")\
-            .eq("id", business_id)\
-            .execute()
+        try:
+            result = supabase.table("businesses")\
+                .select("*")\
+                .eq("id", business_id)\
+                .execute()
 
-        if result.data:
-            return result.data[0]
-        return None
+            if result.data:
+                print(f"✅ SUCCESS BUSINESS: Config fetched for {business_id}")
+                return result.data[0]
+            else:
+                print(f"⚠️ BUSINESS NOT FOUND: {business_id}")
+                return None
+
+        except Exception as qe:
+            print(f"❌ BUSINESS QUERY ERROR: {str(qe)}")
+            return None
 
     except Exception as e:
         print(f"⚠️ Error getting business config: {e}")
@@ -184,14 +225,21 @@ def save_booking(
     try:
         supabase = get_supabase()
 
-        supabase.table("bookings").insert({
-            "lead_id": lead_id,
-            "cal_com_booking_id": cal_com_booking_id,
-            "scheduled_at": scheduled_at,
-            "status": "confirmed"
-        }).execute()
+        try:
+            result = supabase.table("bookings").insert({
+                "lead_id": lead_id,
+                "cal_com_booking_id": cal_com_booking_id,
+                "scheduled_at": scheduled_at,
+                "status": "confirmed"
+            }).execute()
 
-        print(f"✅ Booking saved")
+            print(f"✅ SUCCESS BOOKING: Booking saved for lead {lead_id}")
+            return True
+
+        except Exception as ie:
+            print(f"❌ BOOKING INSERT ERROR: {str(ie)}")
+            return False
 
     except Exception as e:
         print(f"⚠️ Error saving booking: {e}")
+        return False
