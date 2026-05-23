@@ -4,7 +4,7 @@ from pydantic import BaseModel
 import os
 import json
 import requests
-from database import save_contact, save_conversation, save_message, save_lead
+from database import save_contact, save_conversation, save_message, save_lead, get_business_id
 from ai_agent import get_ai_reply
 from notifications import notify_new_lead, notify_escalation
 from booking import get_booking_message
@@ -97,62 +97,98 @@ async def receive_message(request: Request):
 
         if message_type == "text":
             text = message["text"]["body"]
+            print(f"\n{'='*60}")
             print(f"📩 Message from {phone_number}: {text}")
+            print(f"{'='*60}\n")
 
-            # Step 1 — Save contact
-            contact_id = save_contact(phone_number)
+            # ── STEP 0: Get business ID ─────────────────────────────────────
+            business_id = get_business_id()
+            if not business_id:
+                print("❌ CRITICAL: Failed to get business_id")
+                return {"status": "error", "detail": "No business found"}
+            print(f"✅ STEP 0 COMPLETE: BUSINESS_ID = {business_id}\n")
 
-            # Step 2 — Save conversation
-            conversation_id = save_conversation(contact_id)
+            # ── STEP 1: Save contact ────────────────────────────────────────
+            contact_id = save_contact(phone_number, business_id)
+            if not contact_id:
+                print("❌ CRITICAL: Failed to save contact")
+                return {"status": "error", "detail": "Contact creation failed"}
+            print(f"✅ STEP 1 COMPLETE: CONTACT_ID = {contact_id}\n")
 
-            # Step 3 — Save incoming message
-            save_message(
+            # ── STEP 2: Save conversation ───────────────────────────────────
+            conversation_id = save_conversation(contact_id, business_id)
+            if not conversation_id:
+                print("❌ CRITICAL: Failed to create conversation")
+                return {"status": "error", "detail": "Conversation creation failed"}
+            print(f"✅ STEP 2 COMPLETE: CONVERSATION_ID = {conversation_id}\n")
+
+            # ── STEP 3: Save incoming message ───────────────────────────────
+            msg_saved = save_message(
                 conversation_id=conversation_id,
                 content=text,
                 direction="in"
             )
+            if not msg_saved:
+                print("❌ WARNING: Failed to save incoming message")
+            else:
+                print(f"✅ STEP 3 COMPLETE: Incoming message saved\n")
 
-            # Step 4 — Get AI reply
+            # ── STEP 4: Get AI reply ────────────────────────────────────────
             ai_response = await get_ai_reply(text, phone_number)
             reply = ai_response["reply"]
             intent = ai_response["intent"]
             escalate = ai_response["escalate"]
+            print(f"✅ STEP 4 COMPLETE: AI reply = '{reply[:30]}...', intent = {intent}\n")
 
-            # Step 5 — If booking request send Cal.com link
+            # ── STEP 5: If booking request send Cal.com link ────────────────
             if intent == "BOOKING_REQUEST":
                 reply = get_booking_message()
-                print(f"📅 Booking link sent to {phone_number}")
+                print(f"📅 Booking link sent to {phone_number}\n")
 
-            # Step 6 — Save outgoing message
-            save_message(
+            # ── STEP 6: Save outgoing message ───────────────────────────────
+            msg_saved = save_message(
                 conversation_id=conversation_id,
                 content=reply,
                 direction="out",
                 intent=intent
             )
+            if not msg_saved:
+                print("❌ WARNING: Failed to save outgoing message")
+            else:
+                print(f"✅ STEP 6 COMPLETE: Outgoing message saved\n")
 
-            # Step 7 — Save lead
-            save_lead(contact_id, intent=intent)
+            # ── STEP 7: Save lead ───────────────────────────────────────────
+            lead_id = save_lead(contact_id, business_id, intent=intent)
+            if not lead_id:
+                print("❌ WARNING: Failed to save lead")
+            else:
+                print(f"✅ STEP 7 COMPLETE: LEAD_ID = {lead_id}\n")
 
-            # Step 8 — Send new lead notification email
+            # ── STEP 8: Send new lead notification email ────────────────────
             if owner_email:
                 notify_new_lead(owner_email, phone_number, intent)
+                print(f"✅ STEP 8 COMPLETE: Notification sent to {owner_email}\n")
 
-            # Step 9 — Send escalation email if needed
+            # ── STEP 9: Send escalation email if needed ─────────────────────
             if escalate and owner_email:
                 notify_escalation(owner_email, phone_number, text)
                 reply = """I understand this needs special attention.
 I've notified our team and someone will get back to you shortly.
 Thank you for your patience! 🙏"""
+                print(f"✅ STEP 9 COMPLETE: Escalation sent\n")
 
-            # Step 10 — Send reply on WhatsApp
+            # ── STEP 10: Send reply on WhatsApp ─────────────────────────────
             send_whatsapp_message(phone_number, reply)
+            print(f"✅ STEP 10 COMPLETE: Reply sent on WhatsApp\n")
+            print(f"{'='*60}\n")
 
         return {"status": "ok"}
 
     except Exception as e:
-        print(f"⚠️ Error: {e}")
-        return {"status": "ok"}
+        print(f"⚠️ ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "detail": str(e)}
 
 
 # ── ENDPOINT 3 — Manual send ─────────────────────────────────
